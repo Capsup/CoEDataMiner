@@ -10,6 +10,8 @@ namespace CoEDataMiner
 {
     class Program
     {
+        private static Random random = new Random();
+
         static void Main( string[] args )
         {
             Console.WriteLine( "Starting CoE REST scraping..." );
@@ -38,8 +40,7 @@ namespace CoEDataMiner
                 new ZoomLevel() { Level = 2, MinX = -4, MaxX = 4, MinY = -4, MaxY = 4 },
             };
 
-            var random = new Random();
-            using( var http = new HttpClient() )
+            /*using( var http = new HttpClient() )
             {
                 foreach( (var kingdom, int i) in kingdoms.Shuffle().Select( ( val, i ) => (val, i) ) )
                 {
@@ -65,73 +66,96 @@ namespace CoEDataMiner
                             Console.WriteLine( $"Downloading county {k + 1} of duchy {j + 1} of {kingdom.Name}" );
 
                             DownloadData( http, county, "1", folderPath ).Shuffle().Select( ( val, l ) => (val, l) );
-
-                            Thread.Sleep( random.Next( -50, 50 ) + 50 );
                         }
                     }
                 }
-            }
+            }*/
 
             using( var http = new HttpClient() )
             {
                 for( int i = 3; i <= 3; i++ )
                 {
-                    foreach( var zoomLevel in zoomLevels )
+                    foreach( (var zoomLevel, int zoomCount) in zoomLevels.Shuffle().Select( ( val, j ) => (val, j) ) )
                     {
-                        var nX = 0;
-                        var nY = 0;
-                        for( int x = zoomLevel.MinX; x <= zoomLevel.MaxX; x++ )
+                        var range = Enumerable.Range( zoomLevel.MinX, Math.Abs( zoomLevel.MinX ) + Math.Abs( zoomLevel.MaxX ) );
+                        var rangeCount = range.Count();
+                        foreach( (var x, int nX) in range.Shuffle().Select( ( val, j ) => (val, j) ) )
                         {
                             outer:
-                            for( int y = zoomLevel.MinY; y <= zoomLevel.MaxY; y++ )
+                            foreach( (var y, int nY) in range.Shuffle().Select( ( val, j ) => (val, j) ) )
                             {
-                                Console.WriteLine( $"Downloading tile {nX * ( Math.Abs( zoomLevel.MinX ) + Math.Abs( zoomLevel.MaxX ) ) + nY} of " +
-                                    $"{( Math.Abs( zoomLevel.MinX ) + Math.Abs( zoomLevel.MaxX ) ) * ( Math.Abs( zoomLevel.MinY ) + Math.Abs( zoomLevel.MaxY ) )} " +
-                                    $"({( ( nX * ( Math.Abs( zoomLevel.MinX ) + Math.Abs( zoomLevel.MaxX ) ) + (float) nY ) / ( ( Math.Abs( zoomLevel.MinX ) + Math.Abs( zoomLevel.MaxX ) ) * ( Math.Abs( zoomLevel.MinY ) + Math.Abs( zoomLevel.MaxY ) ) ) ) * 100})" );
-
-                                var filePath = $"tiles/{i}/{zoomLevel.Level}/{nX}_{nY}.png";
-                                var dir = new DirectoryInfo( "./" + filePath.Substring( 0, filePath.LastIndexOf( '/' ) ) );
-                                if( !dir.Exists )
-                                    dir.Create();
-
-                                var req = http.GetAsync( $"https://tiles.chroniclesofelyria.com/domains/map/{i}/{zoomLevel.Level}/{x}/{y}" ).GetAwaiter().GetResult();
-                                var data = req.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
-                                if( data?.Length == 0 )
+                                var retry = true;
+                                while( retry )
                                 {
-                                    goto outer;
-                                }
+                                    try
+                                    {
+                                        Console.WriteLine( $"Downloading tile ({x},{y}) for zoom level {zoomLevel.Level} ({( nX * rangeCount + (float) nY ) / ( rangeCount * rangeCount ) * 100:0.##} for {zoomCount + 1}/{zoomLevels.Count()})" );
 
-                                using( var file = File.Create( filePath ) )
-                                {
+                                        var filePath = $"tiles/{i}/{zoomLevel.Level}/{x + Math.Abs( Math.Min( zoomLevel.MinX, 0 ) )}_{y + Math.Abs( Math.Min( zoomLevel.MinY, 0 ) )}.png";
+                                        var dir = new DirectoryInfo( "./" + filePath.Substring( 0, filePath.LastIndexOf( '/' ) ) );
+                                        if( !dir.Exists )
+                                            dir.Create();
 
-                                    file.Write( data );
+                                        var req = http.GetAsync( $"https://tiles.chroniclesofelyria.com/domains/map/{i}/{zoomLevel.Level}/{x}/{y}" ).GetAwaiter().GetResult();
+                                        var data = req.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                                        if( data?.Length == 0 )
+                                        {
+                                            goto outer;
+                                        }
+
+                                        using( var file = File.Create( filePath ) )
+                                        {
+
+                                            file.Write( data );
+                                        }
+
+                                        retry = false;
+                                        Thread.Sleep( random.Next( -20, 0 ) + 20 );
+                                    }
+                                    catch( Exception e )
+                                    {
+                                        Console.WriteLine( "ERROR! " + e);
+                                    }
                                 }
-                                nY++;
-                                Thread.Sleep( random.Next( -20, 0 ) + 20 );
                             }
-                            nX++;
-                            nY = 0;
                         }
                     }
                 }
             }
         }
 
-        private static string[] DownloadData( HttpClient http, string domainId, string domainPath, string folderPath )
+        private static string[] DownloadDomainData( HttpClient http, string domainId, string domainPath, string folderPath )
         {
-            var domainRequest = http.GetAsync( $"https://chroniclesofelyria.com/domains/api/domain/3/{domainPath}?parentIds={domainId}" ).GetAwaiter().GetResult();
-            var geoRequest = http.GetAsync( $"https://chroniclesofelyria.com/domains/api/domain/geo/3/{domainPath}?parentIds={domainId}" ).GetAwaiter().GetResult();
+            string[] result = null;
+            var retry = true;
+            while( retry )
+            {
+                try
+                {
+                    var domainRequest = http.GetAsync( $"https://chroniclesofelyria.com/domains/api/domain/3/{domainPath}?parentIds={domainId}" ).GetAwaiter().GetResult();
+                    var geoRequest = http.GetAsync( $"https://chroniclesofelyria.com/domains/api/domain/geo/3/{domainPath}?parentIds={domainId}" ).GetAwaiter().GetResult();
 
-            var domainData = domainRequest.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            var geoData = geoRequest.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    var domainData = domainRequest.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    var geoData = geoRequest.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
-            using( var file = File.CreateText( folderPath + "domain.txt" ) )
-                file.WriteLine( domainData );
-            using( var file = File.CreateText( folderPath + "geo.txt" ) )
-                file.WriteLine( geoData );
+                    using( var file = File.CreateText( folderPath + "domain.txt" ) )
+                        file.WriteLine( domainData );
+                    using( var file = File.CreateText( folderPath + "geo.txt" ) )
+                        file.WriteLine( geoData );
 
-            var subDomains = JsonConvert.DeserializeAnonymousType( domainData, new[] { new { Id = "" } } );
-            return subDomains.Select( x => x.Id ).ToArray();
+                    var subDomains = JsonConvert.DeserializeAnonymousType( domainData, new[] { new { Id = "" } } );
+                    result = subDomains.Select( x => x.Id ).ToArray();
+
+                    retry = false;
+                    Thread.Sleep( random.Next( -50, 50 ) + 50 );
+                }
+                catch( Exception e )
+                {
+                    Console.WriteLine( "ERROR! " + e );
+                }
+            }
+
+            return result;
         }
     }
 }
